@@ -14,6 +14,7 @@ type UserVO struct {
 	CreateTime     time.Time `xorm:"created 'create_time'"`
 	Ban            bool
 	IsEmailChecked bool
+	Salt           string
 }
 
 type AccountInfo struct {

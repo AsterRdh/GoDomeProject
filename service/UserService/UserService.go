@@ -2,9 +2,14 @@ package UserService
 
 import (
 	"awesomeProject/model"
+	"awesomeProject/model/Email"
 	"awesomeProject/model/User"
+	"awesomeProject/service/MailService"
 	"awesomeProject/util"
+	"encoding/json"
 	"github.com/google/uuid"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -132,7 +137,12 @@ func RegisterUser(user User.User) (bool, string, string, error) {
 		return false, "注册失败，密码解析失败", "", err
 	}
 
-	userVO := User.UserVO{Username: user.Username, Password: password, Email: user.Email}
+	userVO := User.UserVO{
+		Username: user.Username,
+		Password: password,
+		Email:    user.Email,
+		Salt:     uuid.NewString(),
+	}
 	_, err = model.XDAO.Insert(userVO)
 	if err != nil {
 		return false, "注册失败, 插入数据失败", "", err
@@ -143,7 +153,35 @@ func RegisterUser(user User.User) (bool, string, string, error) {
 		return false, "生成Token失败", "", err
 	}
 
+	//发送邮件
+	//生成确认地址
+	err = SendCheckEmail(user.Email, userVO.Salt)
+	if err != nil {
+
+	}
+
 	return true, "注册成功", token, nil
+}
+
+func SendCheckEmail(userEmail string, salt string) error {
+
+	var keyObject = Email.EMailKey{
+		Email: userEmail,
+		Ts:    time.Now(),
+	}
+	marshal, err := json.Marshal(keyObject)
+	if err != nil {
+		return err
+	}
+	key := string(marshal)
+
+	var AESKey = util.GetAesKey(salt)
+	key = util.AesEncryptByECB(key, AESKey)
+
+	var url = model.BaseURL + "/checkemail?email=" + url.QueryEscape(userEmail) + "&key=" + url.QueryEscape(key)
+	sprintf := strings.Replace(Email.Template.ResCheckEmail, "{t_url}", url, 2)
+	err = MailService.SendMail(model.EMail.Accounts.Account, userEmail, sprintf, "确认邮件地址")
+	return err
 }
 
 func UpdateUserImg(sessionID string, pubFileULR string) error {
@@ -173,4 +211,50 @@ func GetAccountInfo(sessionID string) (User.AccountInfo, error) {
 	}
 
 	return account, nil
+}
+
+func CheckEmail(email string, key string) (bool, string, error, string) {
+	//var salts []string
+	//err := model.XDAO.Where("email = ?", email).Table("sm_user").Cols("salt").Find(&salts)
+	var users []User.UserVO
+	err := model.XDAO.Where("email = ?", email).Find(&users)
+	if err != nil || len(users) != 1 {
+		return false, "未知的邮件地址", err, "E000001"
+	}
+	var user = users[0]
+	var salt = user.Salt
+	aesKey := util.GetAesKey(salt)
+	ecb, errMsg, err := util.AesDecryptByECB(key, aesKey)
+	if err != nil {
+		return false, errMsg, err, "E000001"
+	}
+
+	var keyObject Email.EMailKey
+	err = json.Unmarshal([]byte(ecb), &keyObject)
+	if err != nil {
+		return false, "未知的邮件地址", err, "E000001"
+	}
+
+	if email != keyObject.Email {
+		return false, "密文不合法", nil, "E000001"
+	}
+
+	sub := time.Now().Sub(keyObject.Ts)
+	if sub.Minutes() > 15 {
+		return false, "密钥过期", nil, "E000002"
+	}
+	//设置已认证
+	user.IsEmailChecked = true
+	_, err = model.XDAO.ID(user.ID).AllCols().Update(&user)
+	if err != nil {
+		return false, "未知错误", nil, "E000001"
+	}
+
+	//登录
+	sessionID, err := doUserLogin(User.User{Username: user.Username})
+	if err != nil {
+		return false, "", err, ""
+	}
+
+	return true, sessionID, nil, "ok"
 }

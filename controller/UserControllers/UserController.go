@@ -143,3 +143,18 @@ func GetAccountInfoAction(c *gin.Context) {
 	}
 	c.JSON(200, resMsg)
 }
+
+// CheckEmail /**校验邮件地址
+func CheckEmail(c *gin.Context) {
+
+	email := c.Query("email")
+	key := c.Query("key")
+
+	checkEmail, sessionID, err, errorCode := UserService.CheckEmail(email, key)
+	if err != nil || !checkEmail {
+		c.Redirect(http.StatusTemporaryRedirect, model.BaseWebURL+"failCheckEmail?code="+errorCode)
+	}
+	c.SetCookie("session_id", sessionID, 3600, "/", "", false, false)
+	c.Redirect(http.StatusTemporaryRedirect, model.BaseWebURL)
+
+}

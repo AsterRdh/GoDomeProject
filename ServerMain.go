@@ -6,6 +6,8 @@ import (
 	"awesomeProject/controller/Filters"
 	"awesomeProject/controller/UserControllers"
 	"awesomeProject/model"
+	"awesomeProject/model/Email"
+	"awesomeProject/service/MailService"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -15,6 +17,7 @@ import (
 	"github.com/spf13/viper"
 	_ "net/http"
 	"os"
+	"strings"
 )
 
 // 初始化配置文件
@@ -36,7 +39,31 @@ func initConfigs() (err error) {
 	model.ReCaptchaURL = viper.GetString("ReCaptchaURL")
 	model.AuthedFSPath = viper.GetString("AuthedFSPath")
 	model.PublicFSPath = viper.GetString("PublicFSPath")
+	model.AESKey = viper.GetString("AESKey")
+	model.BaseURL = viper.GetString("BaseURL")
+	model.BaseWebURL = viper.GetString("BaseWebURL")
+
+	model.EMail = model.EMailConfig{
+		Server: viper.GetString("mail.server"),
+		Portal: viper.GetInt("mail.portal"),
+		Accounts: model.EMailAccounts{
+			Account: model.EMailAccountConfig{
+				Account:  viper.GetString("mail.account.account"),
+				Password: viper.GetString("mail.account.password"),
+			},
+		},
+	}
 	return err
+}
+
+func loadEmailTemplate() error {
+	var EMailTemplatePath = "./template"
+	CheckEmailBuffer, err := os.ReadFile(EMailTemplatePath + "/CheckEmail.html")
+	if err != nil {
+		return err
+	}
+	Email.Template.ResCheckEmail = string(CheckEmailBuffer)
+	return nil
 }
 
 // 加载RSA密钥
@@ -102,6 +129,21 @@ func initController() {
 		})
 	})
 
+	model.GinEngine.GET("/ping", func(c *gin.Context) {
+
+		sprintf := strings.Replace(Email.Template.ResCheckEmail, "{t_url}", "http://baidu.com", 2)
+		err := MailService.SendMail(model.EMail.Accounts.Account, "asterrdh@live.cn", sprintf, "测试")
+		if err != nil {
+			c.JSON(500, err)
+		}
+		c.JSON(200, gin.H{
+			"Message": "pong",
+			"OkFlag":  true,
+		})
+	})
+
+	model.GinEngine.GET("/checkemail", UserControllers.CheckEmail)
+
 }
 
 func main() {
@@ -110,6 +152,12 @@ func main() {
 	err = initConfigs()
 	if err != nil {
 		fmt.Printf("open server faild,err:%v\n", err)
+		return
+	}
+
+	err = loadEmailTemplate()
+	if err != nil {
+		fmt.Printf("Load Email template faild,err:%v\n", err)
 		return
 	}
 
